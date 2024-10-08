@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+azure-cognitiveservices-speech
+openai
+python-multipart
+python-dotenv
+ffmpeg-python

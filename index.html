@@ -1,0 +1,277 @@
+<!-- app/index.html -->
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Speech-to-Speech Application with Captioning</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        #captions {
+            width: 80%;
+            height: 300px;
+            margin-top: 20px;
+            font-size: 16px;
+            overflow-y: scroll;
+            border: 1px solid #ccc;
+            padding: 10px;
+        }
+        .caption-line {
+            margin-bottom: 10px;
+        }
+        .timestamp {
+            color: #555;
+            font-size: 14px;
+            margin-right: 10px;
+        }
+        .active {
+            background-color: #e0f7fa;
+        }
+        #videoPlayer {
+            width: 80%;
+            margin-top: 20px;
+        }
+        #downloadSRTBtn {
+            margin-top: 10px;
+            padding: 10px 20px;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Speech-to-Speech Application with Captioning</h1>
+
+    <!-- Recording Section -->
+    <h2>Record Audio</h2>
+    <button id="startBtn">Start Recording</button>
+    <button id="stopBtn" disabled>Stop Recording</button>
+    <audio id="audioPlayback" controls></audio>
+
+    <!-- File Upload Section -->
+    <h2>Or Upload Audio/Video File</h2>
+    <input type="file" id="fileInput" accept=".mp3,.wav,.mp4" />
+    <button id="uploadBtn">Upload and Generate Captions</button>
+    <button id="downloadSRTBtn" disabled>Download SRT File</button>
+
+    <!-- Video Player Section (Optional) -->
+    <h2>Video Playback</h2>
+    <video id="videoPlayer" controls>
+        Your browser does not support the video tag.
+    </video>
+
+    <!-- Caption Display -->
+    <h2>Captioning Results</h2>
+    <div id="captions" placeholder="Captioning results will appear here..."></div>
+
+    <script>
+        // Variables for recording
+        let mediaRecorder;
+        let audioChunks = [];
+
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const audioPlayback = document.getElementById('audioPlayback');
+
+        // Variables for file upload
+        const fileInput = document.getElementById('fileInput');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const downloadSRTBtn = document.getElementById('downloadSRTBtn');
+
+        // Caption display
+        const captionsDiv = document.getElementById('captions');
+
+        // Video player
+        const videoPlayer = document.getElementById('videoPlayer');
+
+        let captionsData = []; // To store captions with timestamps
+
+        let srtContent = ""; // To store SRT content for download
+
+        // Recording functionality
+        startBtn.addEventListener('click', async () => {
+            // Disable the start button and enable the stop button
+            startBtn.disabled = true;
+            stopBtn.disabled = false;
+
+            // Check if the browser supports getUserMedia
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    mediaRecorder = new MediaRecorder(stream);
+                    mediaRecorder.start();
+
+                    mediaRecorder.ondataavailable = event => {
+                        audioChunks.push(event.data);
+                    };
+
+                    mediaRecorder.onstop = async () => {
+                        const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                        const formData = new FormData();
+                        formData.append('file', audioBlob, 'input.wav');
+
+                        try {
+                            const response = await fetch('/upload_and_caption', { // No trailing slash
+                                method: 'POST',
+                                body: formData
+                            });
+
+                            if (response.ok) {
+                                const data = await response.json();
+                                console.log('Response data:', data); // Debugging line
+
+                                if (data.error) {
+                                    alert('Error: ' + data.error);
+                                } else {
+                                    // Display the captioning results with timestamps
+                                    displayCaptions(data.captions);
+                                    captionsData = data.captions; // Store captions for synchronization
+                                    srtContent = data.srt; // Store SRT content for download
+                                    downloadSRTBtn.disabled = false;
+                                }
+                            } else {
+                                const errorData = await response.json();
+                                alert('Error: ' + errorData.error);
+                            }
+                        } catch (error) {
+                            console.error('Error:', error);
+                            alert('An error occurred while processing the audio.');
+                        }
+                        audioChunks = [];
+                    };
+                } catch (error) {
+                    console.error('Error accessing microphone:', error);
+                    alert('Could not access your microphone. Please check permissions.');
+                    // Re-enable the start button
+                    startBtn.disabled = false;
+                    stopBtn.disabled = true;
+                }
+            } else {
+                alert('Your browser does not support audio recording.');
+            }
+        });
+
+        stopBtn.addEventListener('click', () => {
+            // Enable the start button and disable the stop button
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+            }
+        });
+
+        // File upload functionality
+        uploadBtn.addEventListener('click', () => {
+            if (fileInput.files.length === 0) {
+                alert('Please select a file to upload.');
+                return;
+            }
+
+            const file = fileInput.files[0];
+            const formData = new FormData();
+            formData.append('file', file);
+
+            fetch('/upload_and_caption', { // No trailing slash
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('Response data:', data); // Added for debugging
+                if (data.error) {
+                    alert('Error: ' + data.error);
+                } else {
+                    // Display the captioning results with timestamps
+                    displayCaptions(data.captions);
+                    captionsData = data.captions; // Store captions for synchronization
+                    srtContent = data.srt; // Store SRT content for download
+                    downloadSRTBtn.disabled = false;
+
+                    // If a video file was uploaded, set it as the source for the video player
+                    if (file.type.startsWith('video/')) {
+                        const videoURL = URL.createObjectURL(file);
+                        videoPlayer.src = videoURL;
+                        videoPlayer.load();
+                    }
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('An error occurred while processing the file.');
+            });
+        });
+
+        // Download SRT functionality
+        downloadSRTBtn.addEventListener('click', () => {
+            if (srtContent) {
+                const blob = new Blob([srtContent], { type: 'application/x-subrip' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'captions.srt';
+                a.click();
+                URL.revokeObjectURL(url);
+            } else {
+                alert('No SRT content available to download.');
+            }
+        });
+
+        // Function to display captions with timestamps
+        function displayCaptions(captions) {
+            captionsDiv.innerHTML = ''; // Clear previous captions
+
+            captions.forEach(caption => {
+                const captionLine = document.createElement('div');
+                captionLine.className = 'caption-line';
+
+                const timestampSpan = document.createElement('span');
+                timestampSpan.className = 'timestamp';
+                timestampSpan.textContent = `[${caption.start_time} - ${caption.end_time}]`;
+
+                const textSpan = document.createElement('span');
+                textSpan.className = 'text';
+                textSpan.textContent = caption.text;
+
+                captionLine.appendChild(timestampSpan);
+                captionLine.appendChild(textSpan);
+
+                captionsDiv.appendChild(captionLine);
+            });
+        }
+
+        // Function to synchronize captions with video playback
+        function synchronizeCaptions() {
+            if (!videoPlayer.src || captionsData.length === 0) {
+                return;
+            }
+
+            const currentTime = videoPlayer.currentTime;
+            captionsDiv.querySelectorAll('.caption-line').forEach((captionDiv, index) => {
+                const caption = captionsData[index];
+                const startTime = parseTime(caption.start_time);
+                const endTime = parseTime(caption.end_time);
+
+                if (currentTime >= startTime && currentTime <= endTime) {
+                    captionDiv.classList.add('active');
+                    // Scroll into view if not visible
+                    captionDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                } else {
+                    captionDiv.classList.remove('active');
+                }
+            });
+        }
+
+        // Helper function to parse time string into seconds
+        function parseTime(timeString) {
+            const [hours, minutes, rest] = timeString.split(':');
+            const [seconds, milliseconds] = rest.split('.');
+            return parseInt(hours) * 3600 + parseInt(minutes) * 60 + parseInt(seconds) + parseInt(milliseconds) / 1000;
+        }
+
+        // Event listener for video playback time update
+        videoPlayer.addEventListener('timeupdate', synchronizeCaptions);
+    </script>
+</body>
+</html>
